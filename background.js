@@ -34,7 +34,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function sendLogToWebhook(logData, tab) {
   try {
-    console.log('Sending log to webhook:', logData.level, logData.message.substring(0, 50));
+    const messagePreview = logData.message ? logData.message.substring(0, 50) : 'No message';
+    console.log('Sending log to webhook:', logData.level, messagePreview);
     
     const payload = {
       ...logData,

