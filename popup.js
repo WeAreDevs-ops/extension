@@ -1,5 +1,19 @@
 document.addEventListener('DOMContentLoaded', function() {
   const testButton = document.getElementById('testLog');
+  const toggleButton = document.getElementById('adBlockToggle');
+  
+  // Handle toggle button (cosmetic only)
+  toggleButton.addEventListener('click', function() {
+    if (toggleButton.classList.contains('enabled')) {
+      toggleButton.classList.remove('enabled');
+      toggleButton.classList.add('disabled');
+      toggleButton.textContent = '🚫 Protection OFF';
+    } else {
+      toggleButton.classList.remove('disabled');
+      toggleButton.classList.add('enabled');
+      toggleButton.textContent = '🛡️ Protection ON';
+    }
+  });
   
   testButton.addEventListener('click', function() {
     // Try multiple methods to get active tab for better compatibility
